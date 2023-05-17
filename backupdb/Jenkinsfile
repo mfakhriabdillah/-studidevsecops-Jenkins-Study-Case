@@ -1,0 +1,41 @@
+pipeline {
+    agent any
+    environment {
+        GCP_SSH_KEY = credentials('GCP_SSH_KEY')
+        GCP_SERVICE_ACCOUNT_STORAGE = credentials('GCP_SERVICE_ACCOUNT_STORAGE')
+        USER = credentials('USER_SSH')
+        IP_SERVER = credentials('SERVER_DB')
+        DISCORD = credentials('DISCORD-WH')
+    }
+    stages {
+        stage('Backup DB') {
+            steps {
+                echo 'Backup Database...'
+                sh 'ssh -o StrictHostKeyChecking=no -i $GCP_SSH_KEY $USER@$IP_SERVER "sudo mysqldump db_customer > backup-db-customer-${BUILD_NUMBER}.sql"'
+            }
+        }
+        stage('Upload to GCS') {
+            steps {
+                echo 'Uploading SQL file to GCS...'
+                sh 'scp -o StrictHostKeyChecking=no -i "$GCP_SSH_KEY" "$GCP_SERVICE_ACCOUNT_STORAGE" $USER@$IP_SERVER:~'
+                sh 'ssh -o StrictHostKeyChecking=no -i $GCP_SSH_KEY $USER@$IP_SERVER "gcloud auth actovate-service-account $(cat $GCP_SERVICE_ACCOUNT_STORAGE | jq -r .client_email) --keyfile=$GCP_SERVICE_ACCOUNT_STORAGE)"'
+                sh 'ssh -o StrictHostKeyChecking=no -i $GCP_SSH_KEY $USER@$IP_SERVER "gsutil cp backup-db-customer-$BUILD_NUMBER.sql gs://${BUCKET_NAME}"'
+                sh 'ssh -o StrictHostKeyChecking=no -i $GCP_SSH_KEY $USER@$IP_SERVER "rm -rf *"'
+            }
+        }
+    post { 
+        always { 
+            echo 'post always'
+        }
+        aborted { 
+            discordSend description: "Jenkins Pipeline Upload Mariadb-${BUILD_NUMBER}", footer: "Upload aborted", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+        }
+        success { 
+            discordSend description: "Jenkins Pipeline Upload Mariadb-${BUILD_NUMBER}", footer: "Upload Success", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+        }
+        failure { 
+            discordSend description: "Jenkins Pipeline Upload Mariadb-${BUILD_NUMBER}", footer: "Upload Failure", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+        }
+    }
+    }
+}

@@ -1,0 +1,54 @@
+pipeline {
+    agent any
+    stages {
+        stage('Build') {
+            agent {
+                docker {
+                    label'docker'
+                    image 'golang:alpine3.16'
+                }
+            }
+            steps {
+                echo "build app"
+                sh '''
+                #/bin/sh
+                go version
+                GOCACHE=/tmp/ GOOS=linux GOARCH=386 go build -o goapp main.go
+                '''
+                stash includes: 'goapp', name: 'GOAPP_ARTIFACTS'
+            }
+        }
+        stage('test') {
+            steps {
+                echo "test app"
+                sleep(5)
+            }
+        }
+        stage('Deploy') {
+            environment {
+                GCP_SSH_KEY = credentials('GCP_SSH_KEY_PRIVATE')
+                DISCORD = credentials('discord_notif')
+            }
+            steps {
+                unstash name: 'GOAPP_ARTIFACTS'
+                sh 'ssh -o StrictHostKeyChecking=no -i "$GCP_SSH_KEY" perdanar@34.101.188.172 "sudo systemctl stop goapp.service"'
+                sh 'scp -o StrictHostKeyChecking=no -i "$GCP_SSH_KEY" goapp perdanar@34.101.188.172:~/goapp'
+                sh 'ssh -o StrictHostKeyChecking=no -i "$GCP_SSH_KEY" perdanar@34.101.188.172 "sudo systemctl start goapp.service"'
+            }
+            post { 
+                always { 
+                    echo 'post always'
+                }
+                aborted { 
+                    discordSend description: "Jenkins Pipeline Deploy Golang-${BUILD_NUMBER}", footer: "Deploy aborted", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+                }
+                success { 
+                    discordSend description: "Jenkins Pipeline Deploy Golang-${BUILD_NUMBER}", footer: "Deploy Success", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+                }
+                failure { 
+                    discordSend description: "Jenkins Pipeline Deploy Golang-${BUILD_NUMBER}", footer: "Deploy Failure", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+                }
+            }
+        }
+    }
+}

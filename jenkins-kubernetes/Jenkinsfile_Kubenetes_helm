@@ -1,0 +1,54 @@
+pipeline {
+    agent {
+        label'docker'
+    }
+    environment {
+        GCP_SERVICE_ACCOUNT = credentials('gcp_service_account_storage')
+        DISCORD = credentials('discord_notif')
+        KUBE_CONFIG = credentials('kubernetes-demo-jenkins')
+    }
+    stages {
+        stage('Build') {
+            steps {
+                echo 'Build Apps'
+                sh 'docker build -t gcr.io/striking-optics-378307/goapp:${BUILD_NUMBER} .'
+            }
+        }
+        stage('Push to GCR') {
+            steps {
+                echo 'Push Image to GCR'
+                sh 'cat "$GCP_SERVICE_ACCOUNT" | docker login -u _json_key --password-stdin https://gcr.io'
+                sh 'docker push gcr.io/striking-optics-378307/goapp:${BUILD_NUMBER}'
+            }
+            post { 
+                aborted { 
+                    discordSend description: "Jenkins Pipeline build goapp image-${BUILD_NUMBER}", footer: "Build aborted", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+                }
+                success { 
+                    discordSend description: "Jenkins Pipeline build goapp image-${BUILD_NUMBER}", footer: "Build Success", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+                }
+                failure { 
+                    discordSend description: "Jenkins Pipeline build goapp image-${BUILD_NUMBER}", footer: "Build Failure", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+                }
+            }
+        }
+        stage('Deploy') {
+            steps {
+                echo 'Deploy App'
+                sh 'helm repo add rizky.charts https://adhithia21.github.io/helm-charts/charts'
+                sh 'helm upgrade --kubeconfig "$KUBE_CONFIG" --install goapp rizky.charts/application'                
+            }
+            post { 
+                aborted { 
+                    discordSend description: "Jenkins Pipeline deploy goapp image-${BUILD_NUMBER}", footer: "Deploy aborted", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+                }
+                success { 
+                    discordSend description: "Jenkins Pipeline Deploy goapp image-${BUILD_NUMBER}", footer: "Deploy Success", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+                }
+                failure { 
+                    discordSend description: "Jenkins Pipeline Deploy goapp image-${BUILD_NUMBER}", footer: "Deploy Failure", link: env.BUILD_URL, result: currentBuild.currentResult, title: JOB_NAME, webhookURL: "$DISCORD"
+                }
+            }
+        }
+    }
+}
